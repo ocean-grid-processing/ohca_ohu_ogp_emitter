@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OHCA/OHU packaging: one ohc_derive blob -> the target per-area deliverable.
+"""OHCA/OHU packaging: one ogp_derive blob -> the target per-area deliverable.
 
 The factory has already done the analysis — the n_fac cross-layer combine, the annual means, the OHCA
 baseline window, and the OLS trends. Its blob carries `ohca`/`ohu` (with their `_sd` and trends) as
@@ -226,13 +226,13 @@ def filename(level, tag, token, product_name, author):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="OHCA/OHU packaging: ohc_derive blob -> target deliverable")
-    ap.add_argument("blobs", nargs="+", help="ohc_derive output NetCDFs (derive_<tag>_<data>_tw<baseline>_<level>.nc)")
+    ap = argparse.ArgumentParser(description="OHCA/OHU packaging: ogp_derive blob -> target deliverable")
+    ap.add_argument("blobs", nargs="+", help="ogp_derive output NetCDFs (derive_<tag>_<data>_tw<baseline>_<level>.nc)")
     ap.add_argument("--tag", required=True, help="provenance tag: filename token + provenance_tag attr")
     ap.add_argument("--provenance-link", default=None, help="URL/path to the provenance record")
     ap.add_argument("--code-version", required=True,
-                    help="URL to the exact ohc_ohca_ohu_emitter code (commit/release); stamped as "
-                         "ohc_ohca_ohu_emitter_code_version")
+                    help="URL to the exact ohca_ohu_ogp_emitter code (commit/release); recorded as this "
+                         "stage's code_version inside config_record")
     ap.add_argument("--product-name", required=True,
                     help="product_name string, the first of the filename's trailing pair and in config_record "
                          "(e.g. LocalGP)")
@@ -249,7 +249,7 @@ def main():
     for path in cfg.blobs:
         blob = xr.open_dataset(path)
         if "ohca" not in blob or "ohu" not in blob:
-            raise SystemExit("%s carries no ohca/ohu; run ohc_derive with --quantities ohca,ohu (+ trends)"
+            raise SystemExit("%s carries no ohca/ohu; run ogp_derive with --quantities ohca,ohu (+ trends)"
                              % path)
         dest = os.path.join(cfg.out, filename(blob.attrs["level"], cfg.tag, _file_token(blob),
                                               cfg.product_name, cfg.author))

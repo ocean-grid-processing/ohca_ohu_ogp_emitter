@@ -1,24 +1,28 @@
-# ohc_ohca_ohu_emitter
+# ohca_ohu_ogp_emitter
 
-`ohc_ohca_ohu_emitter` packages one `ohc_derive` blob into the annual **OHCA** (ocean heat content
-anomaly) and **OHU** (ocean heat uptake) deliverable — one NetCDF per level,
-`ohca_ohu_<tag>_<lo>_<hi>_dbar_<data>_tw<baseline>.nc`.
+`ohca_ohu_ogp_emitter` packages one `ogp_derive` blob into the annual **OHCA** (ocean heat content
+anomaly) and **OHU** (ocean heat uptake) deliverable — one NetCDF per synthetic level,
+`ohca_ohu_<tag>_<lo>_<hi>_dbar_<data>_tw<baseline>_<product_name>_<author>.nc`.
 
 ```
-ohc_ingest ─▶ publish ─▶ ohc_derive (--quantities ohca,ohu,ohca_trend,ohu_trend) ─▶ ohc_ohca_ohu_emitter ─▶ per-level .nc
+localgp_ogp_ingest ─▶ publish ─▶ ogp_derive (--quantities ohca,ohu,ohca_trend,ohu_trend) ─▶ ohca_ohu_ogp_emitter ─▶ per-level .nc
 ```
 
-The analysis is all upstream now. `ohc_derive` does the `n_fac` cross-layer combine, the annual means,
-the OHCA baseline window, the OLS trends, and the ensemble → SD collapse. Its blob hands over
-`ohca`/`ohu` (with their `_sd` and trends) as **basin-integrated extensive** quantities (TJ, and TJ per
-month), plus `area_m2`, the `level`, and the `time_window` it was built with. This emitter is only the
+The analysis is all upstream. `ogp_derive` does the `n_fac` cross-layer combine, the annual means, the
+OHCA baseline window, the OLS trends, and the ensemble → SD collapse. Its blob hands over `ohca`/`ohu`
+(with their `_sd` and trends) as **basin-integrated extensive** quantities (TJ, and TJ per month),
+plus `area_m2`, the `level`, and the `time_window` it was built with. This emitter is only the
 packaging: divide by the area, carry the units to the target's per-area densities, relabel, and write.
 
+This emitter is OHC-specific by design: it reads the `ohca`/`ohu` recipes and nothing else, so it has
+no `[quantity]`-table generality to speak of. A different quantity gets a different emitter
+(`map_ogp_emitter`, `mld_ogp_emitter`); this one exists to match one published target.
+
 > **Units:** output matches the target (Zenodo 14720478 v4.0.0) — **`ohca` in J/m²**, **`ohu` in
-> W/m²** (per-area densities; the W/m² and W/m²/s on the `trend` attrs are the trends). Conversions:
+> W/m²** (per-area densities; the `trend` attrs are W/m² on `ohca` and W/m²/s on `ohu`). Conversions:
 > `ohca = ohca[TJ]/area × 1e12`; `ohu = ohu[TJ/mo]/area × 1e12 / sec_per_month`, using a **round
 > 30-day month** (= 360-day year) to match the target (their OHU is 1.0146× a `365.25/12` month);
-> trends divide by a 365-day year to reach per-second.
+> trends divide by the seconds in one step of their `per` cadence (a 365-day year) to reach per-second.
 
 ## What it computes
 
@@ -32,59 +36,85 @@ ohu(t)  = blob.ohu  / area_m2 × 1e12 / sec_per_month    # W/m²
 
 The values ride a `time_ohca` axis — days since 2004-06-01, each year anchored at its 1-June — built
 from the blob's `year` coord. The `low`/`high` in the filename come from the blob's `level` attr; the
-OHCA baseline label comes from its `time_window`.
+`<data>` span from the blob's own `year` axis; the OHCA baseline label (`tw<baseline>`, and the
+`ohca` long_name) from its `time_window` — a windowless derive run labels the baseline with the data
+span itself.
 
 **Trends.** `ohca_trend`/`ohu_trend` (and their `_sd`) are hung on the `ohca`/`ohu` variables as
-`trend` / `trend_units` / `trend_std` attrs, converted per-second: `trend` on `ohca` is W/m², on `ohu`
-is W/m²/s.
+`trend` / `trend_units` / `trend_std` attrs, converted per-second using each trend's `per` attr
+(`year` → 365 d; `month` → 30 d): `trend` on `ohca` is W/m², on `ohu` is W/m²/s.
 
-**OHU first year.** OHU's first year is an 11-month partial (its t0 tendency has no prior month). The
-factory averaged it and fit the trend including it; this emitter blanks that first year to NaN for
-presentation only — the trend is unchanged.
+**OHU first year.** OHU is the annual mean of a month-to-month difference, whose leading step has no
+prior month. `ogp_derive` voids that whole first year (NaN, not an 11-month partial mean) and keeps it
+out of the trend fit; this emitter carries the NaN through unchanged, and it lands on disk as the
+target's `-999` fill. Nothing is blanked here.
 
 ## Building the input
 
-`ohc_ohca_ohu_emitter` consumes one `ohc_derive` blob per synthetic level. To match the Zenodo target,
-build them with the whole-record baseline — i.e. **no `--time-window`** (the 2005:2024 window is
-GCOS-only) — and the ensemble on:
+`ohca_ohu_ogp_emitter` consumes one `ogp_derive` blob per synthetic level, built along the LocalGP OHC
+happy path in [`ogp_derive/examples/derive_ohc.slurm`](../ogp_derive/examples/derive_ohc.slurm):
 
 ```bash
-python ../ohc_derive/run.py OHC_<constituents>.nc \
-    --level 0_2000 --bathy etopo60.nc --quantities ohca,ohu,ohca_trend,ohu_trend \
-    --tag <tag> --out <dir>
+python ../ogp_derive/run.py OHC_<tag>*.nc \
+    --levels levels/localgp.toml --level 0_2000 --time-window 2005:2024 \
+    --quantities ohca,ohu,ohca_trend,ohu_trend --mask contiguous_from_top \
+    --bathy etopo60.cdf --tag <tag> --code-version URL \
+    --product-name LocalGP --author Giglio_etal2026 --citation "…" --out <dir>
 ```
+
+The `--time-window` is the OHCA baseline and the trend-fit years; it becomes this deliverable's
+`tw<baseline>` token and `time_window` attr, so one derive run per baseline gives one deliverable per
+baseline. Leave the ensemble on (the default) for the `_std` companions.
 
 Each blob **must** carry:
 
-- data vars **`ohca`** and **`ohu`** (annual, extensive); **`ohca_trend`** / **`ohu_trend`** (each with
-  a `per` attr) for the trend attributes; and the `_sd` companions when the derive run kept the
-  ensemble. The emitter errors if `ohca`/`ohu` are absent, and skips the trend/`_sd` outputs that
-  aren't present.
-- attrs **`area_m2`**, **`level`**, and **`time_window`** (which becomes the OHCA baseline label).
+- data vars **`ohca`** and **`ohu`** (annual, extensive; the emitter exits if either is absent);
+  **`ohca_trend`** / **`ohu_trend`** (each with a `per` attr) for the trend attributes; and the `_sd`
+  companions when the derive run kept the ensemble. Trend and `_sd` outputs that aren't present are
+  simply skipped.
+- attrs **`area_m2`**, **`level`**, and **`time_window`**.
 
-`cp0`/`rho0` are not used here (they're a GCOS thing), so they need not be present.
+Nothing else in the blob is read: the `quantity` table, `field_units` and `reduction` stamps ride
+along inside the forwarded provenance but this emitter does not consult them.
 
 ## Usage
 
 ### Test
 ```bash
-docker image build -t ohc_ohca_ohu_emitter:test .
-docker container run -v $(pwd):/app ohc_ohca_ohu_emitter:test pytest
+docker image build -t ohca_ohu_ogp_emitter:test .
+docker container run -v $(pwd):/app ohca_ohu_ogp_emitter:test pytest
 ```
 
 ### Run
+
+One blob in, one deliverable out, per level. The happy path is [`emit.slurm`](emit.slurm), which
+takes `<baseline_window> <level>` and globs the matching derive blob out of the results directory;
+[`run.sh`](run.sh) loops it over the windows and levels of a release:
+
 ```bash
-python emit.py derive_<tag>_<data>_tw<baseline>_<level>.nc [more levels …] --tag <tag> --code-version URL \
-    --product-name LocalGP --author Giglio_etal2026 --citation "…" [--provenance-link URL] [--out DIR]
+sbatch emit.slurm 2005_2024 0_2000
 ```
 
-`--product-name` / `--author` become the filename's trailing pair (`…_<product_name>_<author>.nc`) and are recorded
-in `config_record`; `--citation` is written to a standalone top-level `citation` attribute (a full
-sentence for the deposit).
+#### emit.py options
 
-One blob in, one deliverable out, per level. Run `ohc_derive` first with at least `--quantities
-ohca,ohu` (add `ohca_trend,ohu_trend` for the trend attrs; run without `--no-ensemble` for the `_std`
-companions).
+All configuration is on the command line — no env, no config file. Every resolved option lands in
+`config_record` (under this stage's `run_config`), except `--citation`, which has its own attr.
+
+| option | required | default | what it does |
+|---|:--:|---|---|
+| `derive_*.nc` (positional, 1+) | **yes** | | `ogp_derive` blobs, one per synthetic level (`derive_<tag>_<data>_tw<baseline>_<level>.nc`). Each must carry `ohca` and `ohu` |
+| `--tag` | **yes** | | run token in the filename and the `provenance_tag` attr. Used verbatim; should match the tag the blob was derived under |
+| `--code-version` | **yes** | | URL to the exact `ohca_ohu_ogp_emitter` code (commit/release); recorded as this stage's `code_version` inside `config_record` |
+| `--product-name` | **yes** | | product_name string; first of the filename's trailing pair (whitespace-stripped, case preserved), a standalone top-level `product_name` attr, and recorded in `config_record` |
+| `--author` | **yes** | | author string; last of the filename's trailing pair (e.g. `Giglio_etal2026`) and recorded in `config_record` |
+| `--citation` | **yes** | | citation sentence; written to the standalone top-level `citation` attr (kept out of `config_record` so it isn't duplicated) |
+| `--provenance-link` | | *(none)* | URL/path to the provenance record; written to the `provenance_link` attr |
+| `--out` | | `.` | output directory (created if absent) |
+
+## Output and provenance
+
+Global attrs on each file: `level`, `time_window`, `provenance_tag`, `provenance_link` (when given),
+`citation`, `product_name`, and one `config_record`.
 
 **Provenance chain.** Each deliverable is built from one derive blob, so this step is a 1-in-1-out
 courier: it rolls that blob's whole provenance chain forward (every `*_run_config` / `*_run_facts` /
@@ -96,9 +126,14 @@ config_record = {
   "localgp_ingest":       {"run_config": {…}, "run_facts": {…}, "code_version": "…"},
   "localgp_publish":      {…},
   "ohc_derive":           {…},
-  "ohc_ohca_ohu_emitter": {"run_config": {resolved args}, "run_facts": {level, window, area, …}, "code_version": "…"}
+  "ohc_ohca_ohu_emitter": {"run_config": {resolved args}, "run_facts": {level, time_window, area_m2, quantities_present, ensemble, source_blob}, "code_version": "…"}
 }
 ```
+
+The stage keys are the pipeline's provenance contract and predate the repo renames: `ohc_derive` and
+`ohc_ohca_ohu_emitter` are written by `ogp_derive` and this emitter respectively, and a submission that
+arrived via `--contract ME4OH` carries no `localgp_*` blocks at all — only what the derive stage
+recorded (including its `inferred_config`).
 
 *Why one attribute:* a dozen separate global attributes tips HDF5 into **dense (fractal-heap) attribute
 storage**, whose exact layout some netcdf builds mis-read; a single attribute keeps the file at ≤ 8
@@ -112,28 +147,13 @@ reversible (a constituent's block is `shared` merged with its `per_constituent` 
 `constituents` roster in `ohc_derive.run_facts` — so only genuine fan-outs are touched and a value like
 `n_fac`, nested inside a non-fanned block, is never mistaken for one.
 
-#### emit.py options
-
-| option | default | effect |
-|---|---|---|
-| `derive_*.nc` (positional, 1+) | *(required)* | `ohc_derive` blobs, one per synthetic level (`derive_<tag>_<data>_tw<baseline>_<level>.nc`). Each must carry `ohca` and `ohu`. Point at the whole-record window (no `--time-window`), not gcos's 2005-2024. |
-| `--tag` | *(required)* | run token in the filename (`ohca_ohu_<tag>_<lo>_<hi>_dbar_<data>_tw<baseline>_<product_name>_<author>.nc`) and the `provenance_tag` attr. Used verbatim; should match the tag the blob was derived under. |
-| `--provenance-link` | *(none)* | URL/path to the provenance record; written to the `provenance_link` attr. |
-| `--code-version` | *(required)* | URL to the exact ohc_ohca_ohu_emitter code (commit/release); written to the `ohc_ohca_ohu_emitter_code_version` attr. |
-| `--product-name` | *(required)* | product_name string; first of the filename's trailing pair (whitespace-stripped, case preserved), a standalone top-level `product_name` attr, and recorded in `config_record`. |
-| `--author` | *(required)* | author string; last of the filename's trailing pair (e.g. `Giglio_etal2026`) and recorded in `config_record`. |
-| `--citation` | *(required)* | citation sentence; written to the standalone top-level `citation` attr (kept out of `config_record` so it isn't duplicated). |
-| `--out` | `.` | output directory (created if absent). |
-
 ## Notes
 
-- The **30-day-month** OHU conversion is the one target-matching magic number (their OHU is a constant
+- The **30-day-month** OHU conversion is the magic number inferred from earlier implementations of this pipeline (their OHU is a constant
   1.0146× a `365.25/12` month); `ohca` is unaffected.
 - **Trends are attributes**, not variables, mirroring the target's per-variable `trend` attr.
-- **Fill value `-999`** (the target's) on every data variable on write, so the blanked OHU first year
+- **Fill value `-999`** (the target's) on every data variable on write, so the voided OHU first year
   lands as `-999` on disk (and decodes back to NaN on read).
-- **Annual means are calendar-year** upstream (`ohc_derive` groups by `time.year`), and are stamped
-  here at 1-June. Whether the target's annual value is a calendar year or a June-centered year is not
-  yet confirmed against the target file — `parity.py` is the place to check the `time_ohca` offset.
-- `python parity.py OURS.nc THEIRS.nc` compares one level against the target (Zenodo 14720478 v4.0.0)
-  on the shared `time_ohca`, bridging the `area`/`area_m2` and string-vs-numeric trend differences.
+- **Annual means are calendar-year** upstream (`ogp_derive` groups by `time.year`), and are stamped
+  here at 1-June, which is the target's own convention: on the shared `time_ohca` axis our `ohca` and
+  `ohu` reproduce the target level files index-for-index, and a ±1-year shift breaks the match.
