@@ -16,7 +16,7 @@ packaging: divide by the area, carry the units to the target's per-area densitie
 
 This emitter is OHC-specific by design: it reads the `ohca`/`ohu` recipes and nothing else, so it has
 no `[quantity]`-table generality to speak of. A different quantity gets a different emitter
-(`map_ogp_emitter`, `mld_ogp_emitter`); this one exists to match one published target.
+(`map_ogp_emitter`, `field_map_ogp_emitter`); this one exists to match one published target.
 
 > **Units:** output matches the target (Zenodo 14720478 v4.0.0) — **`ohca` in J/m²**, **`ohu` in
 > W/m²** (per-area densities; the `trend` attrs are W/m² on `ohca` and W/m²/s on `ohu`). Conversions:
